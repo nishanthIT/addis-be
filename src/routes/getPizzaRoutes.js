@@ -25,6 +25,7 @@ import {
   getOtherItemByCategory,
   getOtherItemById,
 } from "../consumerController/orderItemsUser.js";
+import { completeRegistration } from "../consumerController/otp.js";
 
 const router = express.Router();
 
@@ -42,6 +43,7 @@ router.get("/getAllcomboList", getAllcomboList);
 //login
 router.post("/otp", generateOtp);
 router.post("/verify-otp", verifyOtp);
+router.post("/complete-registration", completeRegistration);
 
 router.post("/cart/sync", authenticateUser, validateCartPrices, syncCart);
 router.get("/cart", getCart);

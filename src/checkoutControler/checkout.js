@@ -137,7 +137,7 @@ export default async function checkout(req, res) {
       mode: "payment",
       line_items,
       success_url: `${process.env.FRONTEND_URL}/login?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.FRONTEND_URL}/cancel`,
+      cancel_url: `${process.env.FRONTEND_URL}/cart`,
       metadata: {
         userId,
         cartId: userCart.id,

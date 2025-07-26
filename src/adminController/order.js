@@ -21,6 +21,7 @@ const getOrderDetails = async (req, res) => {
             pizza: true,
             combo: true,
             orderToppings: true,
+            otherItem: true, 
             orderIngredients: true,
           },
         },

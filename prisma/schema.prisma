@@ -98,6 +98,7 @@ model CartItem {
    quantity     Int
    basePrice    Decimal
    finalPrice   Decimal
+   pizzaBase    String?  // Add pizzaBase field
    cartToppings CartToppings[]     
    cartIngredients CartIngredients[] 
    isCombo      Boolean  @default(false)
@@ -137,6 +138,12 @@ model Order {
   customerName    String
   paymentStatus   String      // "PAID", "PENDING", "FAILED"
   paymentId       String?     // Stripe payment intent ID
+  
+  // NEW: Order timing fields
+  orderTiming     String      @default("asap") // "asap" or "preorder"
+  preorderDate    String?     // Date for preorder (YYYY-MM-DD format)
+  preorderTime    String?     // Time for preorder (HH:MM format)
+  
   orderItems      OrderItem[]
   createdAt       DateTime    @default(now())
 }
@@ -154,6 +161,7 @@ model OrderItem {
   size            String
   quantity        Int
   price           Decimal
+  pizzaBase       String?  // Add pizzaBase field
   isCombo         Boolean  @default(false)
   isOtherItem     Boolean  @default(false)
   orderToppings   OrderToppings[]

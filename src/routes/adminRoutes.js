@@ -45,6 +45,13 @@ import {
   getAllOtherItems,
   updateOtherItem,
 } from "../adminController/otherItems.js";
+import {
+  getAllCustomers,
+  getCustomerById,
+  updateCustomer,
+  deleteCustomer,
+  getCustomerStats
+} from "../adminController/customers.js";
 
 const router = express.Router();
 
@@ -75,6 +82,14 @@ adminRouter.post("/addCategory", addCategory);
 adminRouter.put("/updateCategory", updateCategory);
 adminRouter.delete("/deleteCategory", deleteCategory);
 adminRouter.get("/getCategories", getCategories);
+
+//custmers
+adminRouter.get("/customers", getAllCustomers);
+adminRouter.get("/customers/stats", getCustomerStats);
+adminRouter.get("/customers/:id", getCustomerById);
+adminRouter.put("/customers/:id", updateCustomer);
+adminRouter.delete("/customers/:id", deleteCustomer);
+
 
 // Admin pizza
 adminRouter.post("/addPizza", upload.single("image"), convertToPng, addPizza);

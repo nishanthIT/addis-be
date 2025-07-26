@@ -267,17 +267,397 @@
 // }
 
 
+
+
+
+
+
+// import { PrismaClient } from "@prisma/client";
+// import { authenticateUser } from "../middleware/authMiddleware.js";
+
+// // Optimize Prisma client with connection pooling
+// const prisma = new PrismaClient({
+//   datasources: {
+//     db: {
+//       url: process.env.DATABASE_URL,
+//     },
+//   },
+//   // Reduce connection pool to prevent overwhelming the database
+//   __internal: {
+//     engine: {
+//       connectionLimit: 10,
+//     },
+//   },
+// });
+
+// // Helper to normalize arrays for comparison
+// function normalize(arr) {
+//   return [...arr].sort((a, b) => a.id - b.id);
+// }
+
+// // Check if two arrays of {id, quantity} match
+// function arraysMatch(arr1, arr2) {
+//   const norm1 = normalize(arr1);
+//   const norm2 = normalize(arr2);
+//   if (norm1.length !== norm2.length) return false;
+//   return norm1.every(
+//     (item, i) => item.id === norm2[i].id && item.quantity === norm2[i].quantity
+//   );
+// }
+
+// // FIXED: Check if two cart items match
+// function itemsMatch(existingItem, localItem) {
+//   // For combo items
+//   if (localItem.isCombo) {
+//     return existingItem.comboId === localItem.id && existingItem.isCombo;
+//   }
+  
+//   // For other items
+//   if (localItem.isOtherItem) {
+//     return existingItem.otherItemId === localItem.id && existingItem.isOtherItem;
+//   }
+  
+//   // For pizza items - check pizza ID, size, toppings, and ingredients
+//   const pizzaId = localItem.pizzaId || localItem.pizza?.id || localItem.id;
+  
+//   return (
+//     existingItem.pizzaId === pizzaId &&
+//     existingItem.size === localItem.size &&
+//     arraysMatch(
+//       existingItem.toppings || [],
+//       localItem.toppings || []
+//     ) &&
+//     arraysMatch(
+//       existingItem.ingredients || [],
+//       localItem.ingredients || []
+//     ) &&
+//     !existingItem.isCombo &&
+//     !existingItem.isOtherItem
+//   );
+// }
+
+// export default async function syncCart(req, res) {
+//   console.log("Sync Cart hit");
+
+//   try {
+//     // Authenticate user manually
+//     await new Promise((resolve, reject) => {
+//       authenticateUser(req, res, (err) => {
+//         if (err) return reject(err);
+//         resolve();
+//       });
+//     });
+
+//     const userId = req.user.id;
+//     const localItems = req.body.cartItems || [];
+
+//     console.log("Received localItems:", localItems);
+//     console.log("User ID:", userId);
+
+//     // OPTIMIZATION 1: Find existing cart or create new one efficiently
+//     let cart = await prisma.cart.findFirst({
+//       where: { userId },
+//       include: {
+//         cartItems: {
+//           include: {
+//             pizza: true,
+//             combo: true,
+//             otherItem: true,
+//             cartToppings: true,
+//             cartIngredients: true,
+//           },
+//         },
+//       },
+//     });
+
+//     // Create cart if it doesn't exist
+//     if (!cart) {
+//       cart = await prisma.cart.create({
+//         data: { userId },
+//         include: {
+//           cartItems: {
+//             include: {
+//               pizza: true,
+//               combo: true,
+//               otherItem: true,
+//               cartToppings: true,
+//               cartIngredients: true,
+//             },
+//           },
+//         },
+//       });
+//     }
+
+//     // OPTIMIZATION 2: Batch process items - prepare all operations first
+//     const itemsToUpdate = [];
+//     const itemsToCreate = [];
+
+//     for (const localItem of localItems) {
+//       // FIXED: Better handling of different item types
+//       let pizzaId = null;
+//       if (!localItem.isCombo && !localItem.isOtherItem) {
+//         pizzaId = localItem.pizzaId || localItem.pizza?.id || localItem.id;
+//         if (!pizzaId) {
+//           console.warn("Skipping pizza item with missing pizzaId:", localItem);
+//           continue;
+//         }
+//       }
+
+//       const toppings =
+//         localItem.toppings ||
+//         localItem.cartToppings?.map((t) => ({
+//           id: t.toppingId,
+//           quantity: t.addedQuantity,
+//         })) ||
+//         [];
+
+//       const ingredients =
+//         localItem.ingredients ||
+//         localItem.cartIngredients?.map((i) => ({
+//           id: i.ingredientId,
+//           quantity: i.addedQuantity,
+//         })) ||
+//         [];
+
+//       // FIXED: Find existing item with proper matching logic
+//       const existing = cart.cartItems.find((item) => {
+//         const itemWithToppingsAndIngredients = {
+//           ...item,
+//           toppings: item.cartToppings?.map((t) => ({
+//             id: t.toppingId,
+//             quantity: t.addedQuantity,
+//           })) || [],
+//           ingredients: item.cartIngredients?.map((i) => ({
+//             id: i.ingredientId,
+//             quantity: i.addedQuantity,
+//           })) || [],
+//         };
+        
+//         return itemsMatch(itemWithToppingsAndIngredients, localItem);
+//       });
+
+//       const finalPrice =
+//         Number(localItem.price) || Number(localItem.finalPrice) || 0;
+//       const eachPrice =
+//         Number(localItem.eachprice) || Number(localItem.basePrice) || 0;
+
+//       if (existing) {
+//         // FIXED: Update existing item quantities
+//         itemsToUpdate.push({
+//           id: existing.id,
+//           quantity: existing.quantity + localItem.quantity,
+//           finalPrice: Number(existing.finalPrice) + Number(finalPrice),
+//         });
+//       } else {
+//         // FIXED: Create new item with proper data structure
+//         if (localItem.isCombo) {
+//           itemsToCreate.push({
+//             cartId: cart.id,
+//             comboId: localItem.id,
+//             pizzaId: null,
+//             otherItemId: null,
+//             size: "COMBO",
+//             quantity: localItem.quantity,
+//             basePrice: Number(localItem.eachprice || 0),
+//             finalPrice: Number(localItem.eachprice || 0) * localItem.quantity,
+//             isCombo: true,
+//             isOtherItem: false,
+//             toppings: [],
+//             ingredients: [],
+//           });
+//         } else if (localItem.isOtherItem) {
+//           itemsToCreate.push({
+//             cartId: cart.id,
+//             otherItemId: localItem.id,
+//             pizzaId: null,
+//             comboId: null,
+//             size: "OTHER",
+//             quantity: localItem.quantity,
+//             basePrice: Number(localItem.eachprice || 0),
+//             finalPrice: Number(localItem.eachprice || 0) * localItem.quantity,
+//             isCombo: false,
+//             isOtherItem: true,
+//             toppings: [],
+//             ingredients: [],
+//           });
+//         } else {
+//           itemsToCreate.push({
+//             cartId: cart.id,
+//             pizzaId: pizzaId,
+//             comboId: null,
+//             otherItemId: null,
+//             size: localItem.size,
+//             quantity: localItem.quantity,
+//             basePrice: eachPrice,
+//             finalPrice: finalPrice,
+//             isCombo: false,
+//             isOtherItem: false,
+//             toppings: toppings,
+//             ingredients: ingredients,
+//           });
+//         }
+//       }
+//     }
+
+//     // OPTIMIZATION 3: Execute all operations in a single efficient transaction
+//     const result = await prisma.$transaction(async (tx) => {
+//       // Batch update existing items
+//       const updatePromises = itemsToUpdate.map(item =>
+//         tx.cartItem.update({
+//           where: { id: item.id },
+//           data: {
+//             quantity: item.quantity,
+//             finalPrice: item.finalPrice,
+//           },
+//         })
+//       );
+
+//       // Batch create new items
+//       const createPromises = itemsToCreate.map(item => {
+//         if (item.toppings.length > 0 || item.ingredients.length > 0) {
+//           // Create pizza items with toppings/ingredients
+//           return tx.cartItem.create({
+//             data: {
+//               cartId: item.cartId,
+//               pizzaId: item.pizzaId,
+//               comboId: item.comboId,
+//               otherItemId: item.otherItemId,
+//               size: item.size,
+//               quantity: item.quantity,
+//               basePrice: item.basePrice,
+//               finalPrice: item.finalPrice,
+//               isCombo: item.isCombo,
+//               isOtherItem: item.isOtherItem,
+//               cartToppings: {
+//                 create: item.toppings.map((t) => ({
+//                   toppingId: t.id,
+//                   defaultQuantity: 0,
+//                   addedQuantity: t.quantity,
+//                 })),
+//               },
+//               cartIngredients: {
+//                 create: item.ingredients.map((i) => ({
+//                   ingredientId: i.id,
+//                   defaultQuantity: 0,
+//                   addedQuantity: i.quantity,
+//                 })),
+//               },
+//             },
+//             include: {
+//               cartToppings: true,
+//               cartIngredients: true,
+//             },
+//           });
+//         } else {
+//           // Create simple items (combos, other items)
+//           return tx.cartItem.create({
+//             data: {
+//               cartId: item.cartId,
+//               pizzaId: item.pizzaId,
+//               comboId: item.comboId,
+//               otherItemId: item.otherItemId,
+//               size: item.size,
+//               quantity: item.quantity,
+//               basePrice: item.basePrice,
+//               finalPrice: item.finalPrice,
+//               isCombo: item.isCombo,
+//               isOtherItem: item.isOtherItem,
+//             },
+//           });
+//         }
+//       });
+
+//       // Execute all updates and creates in parallel
+//       const [updatedItems, createdItems] = await Promise.all([
+//         Promise.all(updatePromises),
+//         Promise.all(createPromises),
+//       ]);
+
+//       // OPTIMIZATION 4: Single aggregation query for totals
+//       const [totalPrice, totalQuantity] = await Promise.all([
+//         tx.cartItem.aggregate({
+//           where: { cartId: cart.id },
+//           _sum: { finalPrice: true },
+//         }),
+//         tx.cartItem.aggregate({
+//           where: { cartId: cart.id },
+//           _sum: { quantity: true },
+//         }),
+//       ]);
+
+//       // Update cart total - single operation
+//       await tx.cart.update({
+//         where: { id: cart.id },
+//         data: {
+//           totalAmount: totalPrice._sum.finalPrice || 0,
+//         },
+//       });
+
+//       return {
+//         updatedItems,
+//         createdItems,
+//         totalPrice: totalPrice._sum.finalPrice || 0,
+//         totalQuantity: totalQuantity._sum.quantity || 0,
+//       };
+//     }, {
+//       // Set transaction timeout to prevent hanging
+//       timeout: 10000, // 10 seconds
+//     });
+
+//     console.log(
+//       "Cart Items processed:",
+//       `Updated: ${result.updatedItems.length}, Created: ${result.createdItems.length}`
+//     );
+
+//     console.log(
+//       "Cart Final Total: $",
+//       Number(result.totalPrice).toFixed(2)
+//     );
+
+//     // OPTIMIZATION 5: Return combined results without additional DB queries
+//     const allItems = [...result.updatedItems, ...result.createdItems];
+
+//     res.json({
+//       items: allItems,
+//       totalQuantity: result.totalQuantity,
+//       totalPrice: result.totalPrice,
+//     });
+
+//   } catch (err) {
+//     console.error("Error in syncCart:", err);
+    
+//     // Handle specific database connection errors
+//     if (err.message.includes("Can't reach database server")) {
+//       return res.status(503).json({ 
+//         error: "Database temporarily unavailable. Please try again in a moment." 
+//       });
+//     }
+    
+//     if (err.code === 'P2024') { // Transaction timeout
+//       return res.status(408).json({ 
+//         error: "Request timeout. Please try again with fewer items." 
+//       });
+//     }
+    
+//     res.status(500).json({ 
+//       error: "Internal server error during cart sync.",
+//       details: process.env.NODE_ENV === 'development' ? err.message : undefined
+//     });
+//   }
+// }
+
+
+
+
 import { PrismaClient } from "@prisma/client";
 import { authenticateUser } from "../middleware/authMiddleware.js";
 
-// Optimize Prisma client with connection pooling
 const prisma = new PrismaClient({
   datasources: {
     db: {
       url: process.env.DATABASE_URL,
     },
   },
-  // Reduce connection pool to prevent overwhelming the database
   __internal: {
     engine: {
       connectionLimit: 10,
@@ -300,7 +680,20 @@ function arraysMatch(arr1, arr2) {
   );
 }
 
-// FIXED: Check if two cart items match
+// Function to get size multiplier for dynamic topping pricing - BACKEND VALIDATION
+function getSizeMultiplier(size) {
+  switch (size) {
+    case "Large":
+      return 1.5; // 50% extra
+    case "Super Size":
+      return 2; // 100% extra
+    case "Medium":
+    default:
+      return 1; // Medium is base
+  }
+}
+
+// Enhanced item matching logic that considers pizzaBase
 function itemsMatch(existingItem, localItem) {
   // For combo items
   if (localItem.isCombo) {
@@ -312,12 +705,13 @@ function itemsMatch(existingItem, localItem) {
     return existingItem.otherItemId === localItem.id && existingItem.isOtherItem;
   }
   
-  // For pizza items - check pizza ID, size, toppings, and ingredients
+  // For pizza items - check pizza ID, size, pizzaBase, toppings, and ingredients
   const pizzaId = localItem.pizzaId || localItem.pizza?.id || localItem.id;
   
   return (
     existingItem.pizzaId === pizzaId &&
     existingItem.size === localItem.size &&
+    existingItem.pizzaBase === (localItem.pizzaBase || "Thin Crust") &&
     arraysMatch(
       existingItem.toppings || [],
       localItem.toppings || []
@@ -331,8 +725,420 @@ function itemsMatch(existingItem, localItem) {
   );
 }
 
+// SECURE: Calculate actual price on backend - NEVER trust frontend
+// Update the calculateSecurePrice function - around line 110-180:
+
+// SECURE: Calculate actual price on backend - NEVER trust frontend
+// async function calculateSecurePrice(localItem) {
+//   try {
+//     console.log(`🔒 SECURITY: Calculating secure price for item: ${localItem.title || localItem.name}`);
+    
+//     // For combo items
+//     if (localItem.isCombo) {
+//       const combo = await prisma.comboOffers.findUnique({
+//         where: { id: localItem.id }
+//       });
+      
+//       if (!combo) {
+//         throw new Error(`Combo not found: ${localItem.id}`);
+//       }
+      
+//       const comboPrice = Number(combo.price) * localItem.quantity;
+//       console.log(`💰 Combo price calculated: £${comboPrice.toFixed(2)}`);
+//       return comboPrice;
+//     }
+    
+//     // For other items
+//     if (localItem.isOtherItem) {
+//       const otherItem = await prisma.otherItem.findUnique({
+//         where: { id: localItem.id }
+//       });
+      
+//       if (!otherItem) {
+//         throw new Error(`Other item not found: ${localItem.id}`);
+//       }
+      
+//       const otherPrice = Number(otherItem.price) * localItem.quantity;
+//       console.log(`💰 Other item price calculated: £${otherPrice.toFixed(2)}`);
+//       return otherPrice;
+//     }
+    
+//     // For pizza items - SECURE CALCULATION
+//     const pizzaId = localItem.pizzaId || localItem.pizza?.id || localItem.id;
+    
+//     const pizza = await prisma.pizza.findUnique({
+//       where: { id: pizzaId },
+//       include: {
+//         defaultToppings: {
+//           include: {
+//             topping: true
+//           }
+//         },
+//         defaultIngredients: {
+//           include: {
+//             ingredient: true
+//           }
+//         },
+//       }
+//     });
+    
+//     if (!pizza) {
+//       throw new Error(`Pizza not found: ${pizzaId}`);
+//     }
+    
+//     // Get base price from database
+//     const sizes = typeof pizza.sizes === "string" ? JSON.parse(pizza.sizes) : pizza.sizes;
+//     let basePrice = Number(sizes.MEDIUM || 0); // Medium is base
+    
+//     // Add size difference to base price
+//     const size = localItem.size || "Medium";
+//     switch (size) {
+//       case "Large":
+//         basePrice += (Number(sizes.LARGE || 0) - Number(sizes.MEDIUM || 0));
+//         break;
+//       case "Super Size":
+//         basePrice += (Number(sizes.LARGE || 0) * 1.5 - Number(sizes.MEDIUM || 0));
+//         break;
+//       default:
+//         // Medium stays as base
+//         break;
+//     }
+    
+//     console.log(`🍕 Pizza base price for ${size}: £${basePrice.toFixed(2)}`);
+    
+//     // Calculate topping costs with size multiplier - ONLY TOPPINGS GET MULTIPLIER
+//     let toppingCost = 0;
+//     const sizeMultiplier = getSizeMultiplier(size);
+    
+//     const toppings = localItem.toppings || [];
+    
+//     for (const topping of toppings) {
+//       if (topping.quantity > 0) {
+//         // Validate topping exists and get real price from database
+//         const toppingData = await prisma.toppingsList.findUnique({
+//           where: { id: topping.id }
+//         });
+        
+//         if (!toppingData) {
+//           console.warn(`⚠️ Invalid topping ID: ${topping.id}`);
+//           continue; // Skip invalid toppings
+//         }
+        
+//         // Calculate price difference from default
+//         const defaultTopping = pizza.defaultToppings?.find(dt => dt.toppingId === topping.id);
+//         const defaultQuantity = defaultTopping ? defaultTopping.quantity : 0;
+//         const addedQuantity = Math.max(0, topping.quantity - defaultQuantity);
+        
+//         if (addedQuantity > 0) {
+//           const realToppingPrice = Number(toppingData.price) * sizeMultiplier; // ✅ Apply size multiplier
+//           const toppingCostAdded = realToppingPrice * addedQuantity;
+//           toppingCost += toppingCostAdded;
+          
+//           console.log(`🧄 Topping: ${toppingData.name}, Added: ${addedQuantity}, Base Price: £${toppingData.price}, Multiplier: ${sizeMultiplier}x, Adjusted: £${realToppingPrice.toFixed(2)}, Total: £${toppingCostAdded.toFixed(2)}`);
+//         }
+//       }
+//     }
+    
+//     // Calculate ingredient costs - NO SIZE MULTIPLIER FOR INGREDIENTS
+//     let ingredientCost = 0;
+//     const ingredients = localItem.ingredients || [];
+    
+//     for (const ingredient of ingredients) {
+//       if (ingredient.quantity > 0) {
+//         // Validate ingredient exists and get real price from database
+//         const ingredientData = await prisma.ingredientsList.findUnique({
+//           where: { id: ingredient.id }
+//         });
+        
+//         if (!ingredientData) {
+//           console.warn(`⚠️ Invalid ingredient ID: ${ingredient.id}`);
+//           continue; // Skip invalid ingredients
+//         }
+        
+//         // Calculate price difference from default
+//         const defaultIngredient = pizza.defaultIngredients?.find(di => di.ingredientId === ingredient.id);
+//         const defaultQuantity = defaultIngredient ? defaultIngredient.quantity : 0;
+//         const addedQuantity = Math.max(0, ingredient.quantity - defaultQuantity);
+        
+//         if (addedQuantity > 0) {
+//           const realIngredientPrice = Number(ingredientData.price); // ✅ NO size multiplier for ingredients
+//           const ingredientCostAdded = realIngredientPrice * addedQuantity;
+//           ingredientCost += ingredientCostAdded;
+          
+//           console.log(`🥬 Ingredient: ${ingredientData.name}, Added: ${addedQuantity}, Price: £${realIngredientPrice.toFixed(2)} (NO multiplier), Total: £${ingredientCostAdded.toFixed(2)}`);
+//         }
+//       }
+//     }
+    
+//     const totalItemPrice = basePrice + toppingCost + ingredientCost;
+//     const finalPrice = totalItemPrice * localItem.quantity;
+    
+//     console.log(`🔒 SECURE CALCULATION COMPLETE:`);
+//     console.log(`   Base: £${basePrice.toFixed(2)}`);
+//     console.log(`   Toppings: £${toppingCost.toFixed(2)} (WITH ${sizeMultiplier}x multiplier for ${size})`);
+//     console.log(`   Ingredients: £${ingredientCost.toFixed(2)} (NO multiplier)`);
+//     console.log(`   Per Item: £${totalItemPrice.toFixed(2)}`);
+//     console.log(`   Quantity: ${localItem.quantity}`);
+//     console.log(`   FINAL PRICE: £${finalPrice.toFixed(2)}`);
+    
+//     // Compare with frontend price for security logging
+//     const frontendPrice = Number(localItem.price || 0);
+//     if (Math.abs(frontendPrice - finalPrice) > 0.01) {
+//       console.warn(`🚨 SECURITY ALERT: Price mismatch detected!`);
+//       console.warn(`   Frontend claimed: £${frontendPrice.toFixed(2)}`);
+//       console.warn(`   Backend calculated: £${finalPrice.toFixed(2)}`);
+//       console.warn(`   Difference: £${(frontendPrice - finalPrice).toFixed(2)}`);
+//     } else {
+//       console.log(`✅ Price validation passed - Frontend and backend prices match!`);
+//     }
+    
+//     return finalPrice;
+    
+//   } catch (error) {
+//     console.error("🚨 Error in secure price calculation:", error);
+//     throw new Error(`Failed to calculate secure price: ${error.message}`);
+//   }
+// }
+
+
+// Add this constant at the top of the file for security
+const VALID_PIZZA_BASES = {
+  "Regular Crust": 0,
+  "Thin Crust": 0,
+  "Stuffed Crust +2£": 2, // £2 extra
+};
+
+// Update the calculateSecurePrice function
+// Update the calculateSecurePrice function to match frontend logic
+async function calculateSecurePrice(localItem) {
+  try {
+    console.log(`🔒 SECURITY: Calculating secure price for item: ${localItem.title || localItem.name}`);
+    
+    // For combo items
+    if (localItem.isCombo) {
+      const combo = await prisma.comboOffers.findUnique({
+        where: { id: localItem.id }
+      });
+      
+      if (!combo) {
+        throw new Error(`Combo not found: ${localItem.id}`);
+      }
+      
+      const comboPrice = Number(combo.price) * localItem.quantity;
+      console.log(`💰 Combo price calculated: £${comboPrice.toFixed(2)}`);
+      return comboPrice;
+    }
+    
+    // For other items
+    if (localItem.isOtherItem) {
+      const otherItem = await prisma.otherItem.findUnique({
+        where: { id: localItem.id }
+      });
+      
+      if (!otherItem) {
+        throw new Error(`Other item not found: ${localItem.id}`);
+      }
+      
+      const otherPrice = Number(otherItem.price) * localItem.quantity;
+      console.log(`💰 Other item price calculated: £${otherPrice.toFixed(2)}`);
+      return otherPrice;
+    }
+    
+    // For pizza items - SECURE CALCULATION MATCHING FRONTEND
+    const pizzaId = localItem.pizzaId || localItem.pizza?.id || localItem.id;
+    
+    const pizza = await prisma.pizza.findUnique({
+      where: { id: pizzaId },
+      include: {
+        defaultToppings: {
+          include: {
+            topping: true
+          }
+        },
+        defaultIngredients: {
+          include: {
+            ingredient: true
+          }
+        },
+      }
+    });
+    
+    if (!pizza) {
+      throw new Error(`Pizza not found: ${pizzaId}`);
+    }
+    
+    // 🔒 SECURE PIZZA BASE VALIDATION
+    const pizzaBase = localItem.pizzaBase || "Regular Crust";
+    const baseCost = VALID_PIZZA_BASES[pizzaBase];
+    
+    if (baseCost === undefined) {
+      console.warn(`🚨 SECURITY ALERT: Invalid pizza base attempted: "${pizzaBase}"`);
+      console.warn(`   Valid options: ${Object.keys(VALID_PIZZA_BASES).join(', ')}`);
+      throw new Error(`Invalid pizza base: ${pizzaBase}`);
+    }
+    
+    console.log(`🍕 Pizza base: ${pizzaBase}, Extra cost: £${baseCost.toFixed(2)}`);
+    
+    // Get base price from database - START WITH SMALL as frontend does
+    const sizes = typeof pizza.sizes === "string" ? JSON.parse(pizza.sizes) : pizza.sizes;
+    let basePrice = Number(sizes.SMALL || 0); // ✅ Start with SMALL like frontend
+    
+    console.log(`🍕 Starting base price (SMALL): £${basePrice.toFixed(2)}`);
+    
+    // Calculate topping costs FIRST (before size adjustments) - Match frontend logic
+    let toppingCost = 0;
+    const size = localItem.size || "Medium";
+    const sizeMultiplier = getSizeMultiplier(size);
+    
+    const toppings = localItem.toppings || [];
+    
+    for (const topping of toppings) {
+      if (topping.quantity > 0) {
+        // Validate topping exists and get real price from database
+        const toppingData = await prisma.toppingsList.findUnique({
+          where: { id: topping.id }
+        });
+        
+        if (!toppingData) {
+          console.warn(`⚠️ Invalid topping ID: ${topping.id}`);
+          continue; // Skip invalid toppings
+        }
+        
+        // Calculate price difference from default
+        const defaultTopping = pizza.defaultToppings?.find(dt => dt.toppingId === topping.id);
+        const defaultQuantity = defaultTopping ? defaultTopping.quantity : 0;
+        const addedQuantity = Math.max(0, topping.quantity - defaultQuantity);
+        const removedQuantity = Math.max(0, defaultQuantity - topping.quantity);
+        
+        if (addedQuantity > 0) {
+          // Added toppings cost extra with size multiplier
+          const realToppingPrice = Number(toppingData.price) * sizeMultiplier;
+          const toppingCostAdded = realToppingPrice * addedQuantity;
+          toppingCost += toppingCostAdded;
+          
+          console.log(`🧄 Topping Added: ${toppingData.name}, Added: ${addedQuantity}, Base Price: £${toppingData.price}, Multiplier: ${sizeMultiplier}x, Adjusted: £${realToppingPrice.toFixed(2)}, Total: £${toppingCostAdded.toFixed(2)}`);
+        }
+        
+        if (removedQuantity > 0) {
+          // Removed toppings reduce cost with size multiplier
+          const realToppingPrice = Number(toppingData.price) * sizeMultiplier;
+          const toppingCostRemoved = realToppingPrice * removedQuantity;
+          toppingCost -= toppingCostRemoved;
+          
+          console.log(`🧄 Topping Removed: ${toppingData.name}, Removed: ${removedQuantity}, Base Price: £${toppingData.price}, Multiplier: ${sizeMultiplier}x, Adjusted: £${realToppingPrice.toFixed(2)}, Total: -£${toppingCostRemoved.toFixed(2)}`);
+        }
+      }
+    }
+    
+    // Calculate ingredient costs - NO SIZE MULTIPLIER FOR INGREDIENTS
+    let ingredientCost = 0;
+    const ingredients = localItem.ingredients || [];
+    
+    for (const ingredient of ingredients) {
+      if (ingredient.quantity > 0) {
+        // Validate ingredient exists and get real price from database
+        const ingredientData = await prisma.ingredientsList.findUnique({
+          where: { id: ingredient.id }
+        });
+        
+        if (!ingredientData) {
+          console.warn(`⚠️ Invalid ingredient ID: ${ingredient.id}`);
+          continue; // Skip invalid ingredients
+        }
+        
+        // Calculate price difference from default
+        const defaultIngredient = pizza.defaultIngredients?.find(di => di.ingredientId === ingredient.id);
+        const defaultQuantity = defaultIngredient ? defaultIngredient.quantity : 0;
+        const addedQuantity = Math.max(0, ingredient.quantity - defaultQuantity);
+        const removedQuantity = Math.max(0, defaultQuantity - ingredient.quantity);
+        
+        if (addedQuantity > 0) {
+          const realIngredientPrice = Number(ingredientData.price);
+          const ingredientCostAdded = realIngredientPrice * addedQuantity;
+          ingredientCost += ingredientCostAdded;
+          
+          console.log(`🥬 Ingredient Added: ${ingredientData.name}, Added: ${addedQuantity}, Price: £${realIngredientPrice.toFixed(2)} (NO multiplier), Total: £${ingredientCostAdded.toFixed(2)}`);
+        }
+        
+        if (removedQuantity > 0) {
+          const realIngredientPrice = Number(ingredientData.price);
+          const ingredientCostRemoved = realIngredientPrice * removedQuantity;
+          ingredientCost -= ingredientCostRemoved;
+          
+          console.log(`🥬 Ingredient Removed: ${ingredientData.name}, Removed: ${removedQuantity}, Price: £${realIngredientPrice.toFixed(2)} (NO multiplier), Total: -£${ingredientCostRemoved.toFixed(2)}`);
+        }
+      }
+    }
+    
+    // Now calculate the temp price (like frontend finalPrice)
+    let tempPrice = basePrice + toppingCost + ingredientCost;
+    
+    // Ensure minimum price is the base price (like frontend Math.max logic)
+    let finalPricePerItem = Math.max(tempPrice, basePrice);
+    
+    console.log(`🍕 After toppings/ingredients - tempPrice: £${tempPrice.toFixed(2)}, finalPricePerItem: £${finalPricePerItem.toFixed(2)}`);
+    
+    // NOW apply size adjustments like frontend - MATCH EXACT FRONTEND LOGIC
+    switch (size) {
+      case "Large":
+        // Add difference between MEDIUM and SMALL (like frontend)
+        finalPricePerItem += (Number(sizes.MEDIUM || 0) - Number(sizes.SMALL || 0));
+        console.log(`🍕 Large size adjustment: +£${(Number(sizes.MEDIUM || 0) - Number(sizes.SMALL || 0)).toFixed(2)}`);
+        break;
+      case "Super Size":
+        // Add difference between LARGE and SMALL (like frontend)
+        finalPricePerItem += (Number(sizes.LARGE || 0) - Number(sizes.SMALL || 0));
+        console.log(`🍕 Super Size adjustment: +£${(Number(sizes.LARGE || 0) - Number(sizes.SMALL || 0)).toFixed(2)}`);
+        break;
+      case "Medium":
+      default:
+        // Medium stays as calculated
+        console.log(`🍕 Medium size - no additional adjustment`);
+        break;
+    }
+    
+    // Add pizza base cost (like frontend)
+    if (pizzaBase === "Stuffed Crust +2£") {
+      finalPricePerItem += baseCost; // Add £2 for stuffed crust
+      console.log(`🍕 Stuffed crust adjustment: +£${baseCost.toFixed(2)}`);
+    }
+    
+    // Final price with quantity
+    const finalPrice = finalPricePerItem * localItem.quantity;
+    
+    console.log(`🔒 SECURE CALCULATION COMPLETE (MATCHING FRONTEND):`);
+    console.log(`   Starting Base (SMALL): £${basePrice.toFixed(2)}`);
+    console.log(`   Toppings: £${toppingCost.toFixed(2)} (WITH ${sizeMultiplier}x multiplier for ${size})`);
+    console.log(`   Ingredients: £${ingredientCost.toFixed(2)} (NO multiplier)`);
+    console.log(`   After adjustments: £${tempPrice.toFixed(2)}`);
+    console.log(`   Minimum enforced: £${Math.max(tempPrice, basePrice).toFixed(2)}`);
+    console.log(`   Size adjustment: ${size}`);
+    console.log(`   Pizza Base: ${pizzaBase} (+£${baseCost.toFixed(2)})`);
+    console.log(`   Per Item Final: £${finalPricePerItem.toFixed(2)}`);
+    console.log(`   Quantity: ${localItem.quantity}`);
+    console.log(`   FINAL TOTAL: £${finalPrice.toFixed(2)}`);
+    
+    // Compare with frontend price for security logging
+    const frontendPrice = Number(localItem.price || 0);
+    if (Math.abs(frontendPrice - finalPrice) > 0.01) {
+      console.warn(`🚨 SECURITY ALERT: Price mismatch detected!`);
+      console.warn(`   Frontend claimed: £${frontendPrice.toFixed(2)}`);
+      console.warn(`   Backend calculated: £${finalPrice.toFixed(2)}`);
+      console.warn(`   Difference: £${(frontendPrice - finalPrice).toFixed(2)}`);
+    } else {
+      console.log(`✅ Price validation passed - Frontend and backend prices match!`);
+    }
+    
+    return finalPrice;
+    
+  } catch (error) {
+    console.error("🚨 Error in secure price calculation:", error);
+    throw new Error(`Failed to calculate secure price: ${error.message}`);
+  }
+}
+
 export default async function syncCart(req, res) {
-  console.log("Sync Cart hit");
+  console.log("🔥 SECURE Cart Sync Started");
 
   try {
     // Authenticate user manually
@@ -346,10 +1152,37 @@ export default async function syncCart(req, res) {
     const userId = req.user.id;
     const localItems = req.body.cartItems || [];
 
-    console.log("Received localItems:", localItems);
-    console.log("User ID:", userId);
+    console.log("📦 Received items for secure processing:", localItems.length);
+    console.log("👤 User ID:", userId);
 
-    // OPTIMIZATION 1: Find existing cart or create new one efficiently
+    // SECURITY: Validate and recalculate all prices
+    console.log("🔒 Starting secure price validation...");
+    
+    const validatedItems = [];
+    for (const localItem of localItems) {
+      try {
+        const securePrice = await calculateSecurePrice(localItem);
+        const eachPrice = securePrice / localItem.quantity;
+        
+        validatedItems.push({
+          ...localItem,
+          securePrice: securePrice,
+          secureEachPrice: eachPrice,
+          validated: true
+        });
+        
+        console.log(`✅ Validated item: ${localItem.title}, Size: ${localItem.size}, Quantity: ${localItem.quantity}, Secure Price: £${securePrice.toFixed(2)}`);
+        
+      } catch (error) {
+        console.error(`❌ Failed to validate item: ${localItem.title}`, error.message);
+        // Skip invalid items for security
+        continue;
+      }
+    }
+    
+    console.log(`🔒 Validated ${validatedItems.length} out of ${localItems.length} items`);
+
+    // Find existing cart or create new one
     let cart = await prisma.cart.findFirst({
       where: { userId },
       include: {
@@ -383,38 +1216,38 @@ export default async function syncCart(req, res) {
       });
     }
 
-    // OPTIMIZATION 2: Batch process items - prepare all operations first
+    // Batch process VALIDATED items only
     const itemsToUpdate = [];
     const itemsToCreate = [];
 
-    for (const localItem of localItems) {
-      // FIXED: Better handling of different item types
+    for (const validatedItem of validatedItems) {
+      // Better handling of different item types
       let pizzaId = null;
-      if (!localItem.isCombo && !localItem.isOtherItem) {
-        pizzaId = localItem.pizzaId || localItem.pizza?.id || localItem.id;
+      if (!validatedItem.isCombo && !validatedItem.isOtherItem) {
+        pizzaId = validatedItem.pizzaId || validatedItem.pizza?.id || validatedItem.id;
         if (!pizzaId) {
-          console.warn("Skipping pizza item with missing pizzaId:", localItem);
+          console.warn("⚠️ Skipping pizza item with missing pizzaId:", validatedItem);
           continue;
         }
       }
 
       const toppings =
-        localItem.toppings ||
-        localItem.cartToppings?.map((t) => ({
+        validatedItem.toppings ||
+        validatedItem.cartToppings?.map((t) => ({
           id: t.toppingId,
           quantity: t.addedQuantity,
         })) ||
         [];
 
       const ingredients =
-        localItem.ingredients ||
-        localItem.cartIngredients?.map((i) => ({
+        validatedItem.ingredients ||
+        validatedItem.cartIngredients?.map((i) => ({
           id: i.ingredientId,
           quantity: i.addedQuantity,
         })) ||
         [];
 
-      // FIXED: Find existing item with proper matching logic
+      // Find existing item with enhanced matching logic
       const existing = cart.cartItems.find((item) => {
         const itemWithToppingsAndIngredients = {
           ...item,
@@ -428,48 +1261,49 @@ export default async function syncCart(req, res) {
           })) || [],
         };
         
-        return itemsMatch(itemWithToppingsAndIngredients, localItem);
+        return itemsMatch(itemWithToppingsAndIngredients, validatedItem);
       });
 
-      const finalPrice =
-        Number(localItem.price) || Number(localItem.finalPrice) || 0;
-      const eachPrice =
-        Number(localItem.eachprice) || Number(localItem.basePrice) || 0;
+      // USE ONLY SECURE PRICES - NEVER TRUST FRONTEND
+      const securePrice = validatedItem.securePrice;
+      const secureEachPrice = validatedItem.secureEachPrice;
 
       if (existing) {
-        // FIXED: Update existing item quantities
+        // Update existing item quantities with SECURE PRICE
         itemsToUpdate.push({
           id: existing.id,
-          quantity: existing.quantity + localItem.quantity,
-          finalPrice: Number(existing.finalPrice) + Number(finalPrice),
+          quantity: existing.quantity + validatedItem.quantity,
+          finalPrice: Number(existing.finalPrice) + Number(securePrice),
         });
       } else {
-        // FIXED: Create new item with proper data structure
-        if (localItem.isCombo) {
+        // Create new item with SECURE PRICE
+        if (validatedItem.isCombo) {
           itemsToCreate.push({
             cartId: cart.id,
-            comboId: localItem.id,
+            comboId: validatedItem.id,
             pizzaId: null,
             otherItemId: null,
             size: "COMBO",
-            quantity: localItem.quantity,
-            basePrice: Number(localItem.eachprice || 0),
-            finalPrice: Number(localItem.eachprice || 0) * localItem.quantity,
+            quantity: validatedItem.quantity,
+            basePrice: secureEachPrice,
+            finalPrice: securePrice,
+            pizzaBase: null,
             isCombo: true,
             isOtherItem: false,
             toppings: [],
             ingredients: [],
           });
-        } else if (localItem.isOtherItem) {
+        } else if (validatedItem.isOtherItem) {
           itemsToCreate.push({
             cartId: cart.id,
-            otherItemId: localItem.id,
+            otherItemId: validatedItem.id,
             pizzaId: null,
             comboId: null,
             size: "OTHER",
-            quantity: localItem.quantity,
-            basePrice: Number(localItem.eachprice || 0),
-            finalPrice: Number(localItem.eachprice || 0) * localItem.quantity,
+            quantity: validatedItem.quantity,
+            basePrice: secureEachPrice,
+            finalPrice: securePrice,
+            pizzaBase: null,
             isCombo: false,
             isOtherItem: true,
             toppings: [],
@@ -481,10 +1315,11 @@ export default async function syncCart(req, res) {
             pizzaId: pizzaId,
             comboId: null,
             otherItemId: null,
-            size: localItem.size,
-            quantity: localItem.quantity,
-            basePrice: eachPrice,
-            finalPrice: finalPrice,
+            size: validatedItem.size,
+            quantity: validatedItem.quantity,
+            basePrice: secureEachPrice,
+            finalPrice: securePrice, // SECURE PRICE ONLY
+            pizzaBase: validatedItem.pizzaBase || "Thin Crust",
             isCombo: false,
             isOtherItem: false,
             toppings: toppings,
@@ -494,7 +1329,7 @@ export default async function syncCart(req, res) {
       }
     }
 
-    // OPTIMIZATION 3: Execute all operations in a single efficient transaction
+    // Execute all operations in transaction
     const result = await prisma.$transaction(async (tx) => {
       // Batch update existing items
       const updatePromises = itemsToUpdate.map(item =>
@@ -520,7 +1355,8 @@ export default async function syncCart(req, res) {
               size: item.size,
               quantity: item.quantity,
               basePrice: item.basePrice,
-              finalPrice: item.finalPrice,
+              finalPrice: item.finalPrice, // SECURE PRICE
+              pizzaBase: item.pizzaBase,
               isCombo: item.isCombo,
               isOtherItem: item.isOtherItem,
               cartToppings: {
@@ -544,7 +1380,7 @@ export default async function syncCart(req, res) {
             },
           });
         } else {
-          // Create simple items (combos, other items)
+          // Create simple items
           return tx.cartItem.create({
             data: {
               cartId: item.cartId,
@@ -554,7 +1390,8 @@ export default async function syncCart(req, res) {
               size: item.size,
               quantity: item.quantity,
               basePrice: item.basePrice,
-              finalPrice: item.finalPrice,
+              finalPrice: item.finalPrice, // SECURE PRICE
+              pizzaBase: item.pizzaBase,
               isCombo: item.isCombo,
               isOtherItem: item.isOtherItem,
             },
@@ -568,7 +1405,7 @@ export default async function syncCart(req, res) {
         Promise.all(createPromises),
       ]);
 
-      // OPTIMIZATION 4: Single aggregation query for totals
+      // Calculate totals
       const [totalPrice, totalQuantity] = await Promise.all([
         tx.cartItem.aggregate({
           where: { cartId: cart.id },
@@ -580,7 +1417,7 @@ export default async function syncCart(req, res) {
         }),
       ]);
 
-      // Update cart total - single operation
+      // Update cart total
       await tx.cart.update({
         where: { id: cart.id },
         data: {
@@ -595,47 +1432,42 @@ export default async function syncCart(req, res) {
         totalQuantity: totalQuantity._sum.quantity || 0,
       };
     }, {
-      // Set transaction timeout to prevent hanging
-      timeout: 10000, // 10 seconds
+      timeout: 15000,
     });
 
-    console.log(
-      "Cart Items processed:",
-      `Updated: ${result.updatedItems.length}, Created: ${result.createdItems.length}`
-    );
+    console.log("✅ SECURE Cart Items processed:", `Updated: ${result.updatedItems.length}, Created: ${result.createdItems.length}`);
+    console.log("💰 SECURE Cart Final Total: £", Number(result.totalPrice).toFixed(2));
 
-    console.log(
-      "Cart Final Total: $",
-      Number(result.totalPrice).toFixed(2)
-    );
-
-    // OPTIMIZATION 5: Return combined results without additional DB queries
     const allItems = [...result.updatedItems, ...result.createdItems];
 
     res.json({
       items: allItems,
       totalQuantity: result.totalQuantity,
       totalPrice: result.totalPrice,
+      security: {
+        validated: true,
+        itemsProcessed: validatedItems.length,
+        itemsRejected: localItems.length - validatedItems.length
+      }
     });
 
   } catch (err) {
-    console.error("Error in syncCart:", err);
+    console.error("🚨 SECURITY ERROR in syncCart:", err);
     
-    // Handle specific database connection errors
     if (err.message.includes("Can't reach database server")) {
       return res.status(503).json({ 
         error: "Database temporarily unavailable. Please try again in a moment." 
       });
     }
     
-    if (err.code === 'P2024') { // Transaction timeout
+    if (err.code === 'P2024') {
       return res.status(408).json({ 
         error: "Request timeout. Please try again with fewer items." 
       });
     }
     
     res.status(500).json({ 
-      error: "Internal server error during cart sync.",
+      error: "Internal server error during secure cart sync.",
       details: process.env.NODE_ENV === 'development' ? err.message : undefined
     });
   }

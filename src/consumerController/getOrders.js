@@ -1,11 +1,9 @@
-// Create a new file: consumerController/getOrders.js
-
 import { PrismaClient } from "@prisma/client";
 const prisma = new PrismaClient();
 
 export const getOrders = async (req, res) => {
   try {
-    const userId = req.user.id;
+    const userId = req.user.userId; // Make sure this matches your JWT token structure
 
     const orders = await prisma.order.findMany({
       where: { userId },
@@ -14,12 +12,13 @@ export const getOrders = async (req, res) => {
         orderItems: {
           include: {
             pizza: true,
+            combo: true,
+            otherItem: true, // Include otherItem to get the name and details
             orderToppings: true,
             orderIngredients: true,
-            otherItem: true,
           },
         },
-      },
+      },    
     });
 
     return res.status(200).json({
@@ -35,6 +34,3 @@ export const getOrders = async (req, res) => {
     });
   }
 };
-
-// Add this route to your router (in consumer.js)
-// router.get("/orders", authenticateUser, getOrders);
