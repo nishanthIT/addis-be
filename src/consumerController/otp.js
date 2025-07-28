@@ -725,7 +725,7 @@ const verifyOtp = async (req, res) => {
         console.log('Generated token for new user:', token);
 
         const domain = process.env.NODE_ENV === 'production' 
-          ? '.circlepizzapizza.co.uk'
+          ? '.addiscombepizza.co.uk'
           : 'localhost';
         
         res.cookie('authToken', token, {

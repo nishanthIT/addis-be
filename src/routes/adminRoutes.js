@@ -53,6 +53,16 @@ import {
   getCustomerStats
 } from "../adminController/customers.js";
 
+import {
+  getDashboardStats,
+  getRevenueData,
+  getRecentOrdersForDashboard,
+  getMonthlyRevenue,
+  getTopSellingItems,
+  getOrderStatusDistribution
+} from "../adminController/dashboard.js";
+
+
 const router = express.Router();
 
 // Public routes (no auth required)
@@ -62,6 +72,15 @@ router.post("/login", login); // Changed back to /admin/login
 // Protected routes with middleware
 router.use("/admin", verifyToken); // Apply middleware to all admin routes
 const adminRouter = express.Router();
+
+
+router.get("/admin/dashboard/stats", getDashboardStats);
+router.get("/admin/dashboard/revenue", getRevenueData);
+router.get("/admin/dashboard/recent-orders", getRecentOrdersForDashboard);
+router.get("/admin/dashboard/monthly-revenue", getMonthlyRevenue);
+router.get("/admin/dashboard/top-items", getTopSellingItems);
+router.get("/admin/dashboard/order-status", getOrderStatusDistribution);
+
 
 // Admin routes (protected routes)
 adminRouter.post("/addTopping", addTopping);

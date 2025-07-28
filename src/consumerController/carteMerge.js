@@ -711,7 +711,7 @@ function itemsMatch(existingItem, localItem) {
   return (
     existingItem.pizzaId === pizzaId &&
     existingItem.size === localItem.size &&
-    existingItem.pizzaBase === (localItem.pizzaBase || "Thin Crust") &&
+    normalizePizzaBase(existingItem.pizzaBase) === normalizePizzaBase(localItem.pizzaBase) &&
     arraysMatch(
       existingItem.toppings || [],
       localItem.toppings || []
@@ -901,12 +901,39 @@ function itemsMatch(existingItem, localItem) {
 // }
 
 
-// Add this constant at the top of the file for security
+// Add this constant at the top of the file for security with dynamic stuffed crust pricing
 const VALID_PIZZA_BASES = {
   "Regular Crust": 0,
-  "Thin Crust": 0,
-  "Stuffed Crust +2£": 2, // £2 extra
+  "ThinCrust": 0,
+  "Thin Crust": 0, // Add alternative naming
+  "Stuffed Crust +2£": (size) => {
+    // Dynamic stuffed crust pricing based on size
+    switch (size) {
+      case "Large":
+        return 3; // £3 for large
+      case "Super Size":
+        return 4; // £4 for super size
+      case "Medium":
+      default:
+        return 2; // £2 for medium
+    }
+  }
 };
+
+// Helper function to normalize pizza base names from frontend
+function normalizePizzaBase(pizzaBase) {
+  if (!pizzaBase) return "Regular Crust";
+  
+  // Handle dynamic frontend labeling for stuffed crust
+  if (pizzaBase.includes("Stuffed Crust")) {
+    return "Stuffed Crust +2£"; // Normalize to backend key
+  }
+  
+  // Handle other variations
+  if (pizzaBase === "ThinCrust") return "Thin Crust";
+  
+  return pizzaBase;
+}
 
 // Update the calculateSecurePrice function
 // Update the calculateSecurePrice function to match frontend logic
@@ -946,6 +973,7 @@ async function calculateSecurePrice(localItem) {
     
     // For pizza items - SECURE CALCULATION MATCHING FRONTEND
     const pizzaId = localItem.pizzaId || localItem.pizza?.id || localItem.id;
+    const size = localItem.size || "Medium"; // Move size declaration to top
     
     const pizza = await prisma.pizza.findUnique({
       where: { id: pizzaId },
@@ -967,17 +995,28 @@ async function calculateSecurePrice(localItem) {
       throw new Error(`Pizza not found: ${pizzaId}`);
     }
     
-    // 🔒 SECURE PIZZA BASE VALIDATION
-    const pizzaBase = localItem.pizzaBase || "Regular Crust";
-    const baseCost = VALID_PIZZA_BASES[pizzaBase];
+    // 🔒 SECURE PIZZA BASE VALIDATION with dynamic pricing
+    const rawPizzaBase = localItem.pizzaBase || "Regular Crust";
+    const pizzaBase = normalizePizzaBase(rawPizzaBase); // Normalize frontend variations
     
-    if (baseCost === undefined) {
-      console.warn(`🚨 SECURITY ALERT: Invalid pizza base attempted: "${pizzaBase}"`);
+    // Get base cost - handle both static and dynamic pricing
+    let baseCost = 0;
+    const baseHandler = VALID_PIZZA_BASES[pizzaBase];
+    
+    if (baseHandler === undefined) {
+      console.warn(`🚨 SECURITY ALERT: Invalid pizza base attempted: "${rawPizzaBase}" (normalized: "${pizzaBase}")`);
       console.warn(`   Valid options: ${Object.keys(VALID_PIZZA_BASES).join(', ')}`);
-      throw new Error(`Invalid pizza base: ${pizzaBase}`);
+      throw new Error(`Invalid pizza base: ${rawPizzaBase}`);
     }
     
-    console.log(`🍕 Pizza base: ${pizzaBase}, Extra cost: £${baseCost.toFixed(2)}`);
+    // Calculate base cost - if it's a function (stuffed crust), call it with size
+    if (typeof baseHandler === 'function') {
+      baseCost = baseHandler(size);
+      console.log(`🍕 Pizza base: ${rawPizzaBase} (normalized: ${pizzaBase}), Size: ${size}, Dynamic cost: £${baseCost.toFixed(2)}`);
+    } else {
+      baseCost = baseHandler;
+      console.log(`🍕 Pizza base: ${rawPizzaBase} (normalized: ${pizzaBase}), Static cost: £${baseCost.toFixed(2)}`);
+    }
     
     // Get base price from database - START WITH SMALL as frontend does
     const sizes = typeof pizza.sizes === "string" ? JSON.parse(pizza.sizes) : pizza.sizes;
@@ -987,7 +1026,6 @@ async function calculateSecurePrice(localItem) {
     
     // Calculate topping costs FIRST (before size adjustments) - Match frontend logic
     let toppingCost = 0;
-    const size = localItem.size || "Medium";
     const sizeMultiplier = getSizeMultiplier(size);
     
     const toppings = localItem.toppings || [];
@@ -1097,10 +1135,15 @@ async function calculateSecurePrice(localItem) {
         break;
     }
     
-    // Add pizza base cost (like frontend)
+    // Add pizza base cost with dynamic pricing
     if (pizzaBase === "Stuffed Crust +2£") {
-      finalPricePerItem += baseCost; // Add £2 for stuffed crust
-      console.log(`🍕 Stuffed crust adjustment: +£${baseCost.toFixed(2)}`);
+      // Dynamic stuffed crust pricing based on size (already calculated above)
+      finalPricePerItem += baseCost;
+      console.log(`🍕 Stuffed crust adjustment (${size}): +£${baseCost.toFixed(2)}`);
+    } else if (baseCost > 0) {
+      // Static pricing for other bases
+      finalPricePerItem += baseCost;
+      console.log(`🍕 ${rawPizzaBase} adjustment: +£${baseCost.toFixed(2)}`);
     }
     
     // Final price with quantity
@@ -1113,7 +1156,7 @@ async function calculateSecurePrice(localItem) {
     console.log(`   After adjustments: £${tempPrice.toFixed(2)}`);
     console.log(`   Minimum enforced: £${Math.max(tempPrice, basePrice).toFixed(2)}`);
     console.log(`   Size adjustment: ${size}`);
-    console.log(`   Pizza Base: ${pizzaBase} (+£${baseCost.toFixed(2)})`);
+    console.log(`   Pizza Base: ${rawPizzaBase} (normalized: ${pizzaBase}) (+£${baseCost.toFixed(2)})`);
     console.log(`   Per Item Final: £${finalPricePerItem.toFixed(2)}`);
     console.log(`   Quantity: ${localItem.quantity}`);
     console.log(`   FINAL TOTAL: £${finalPrice.toFixed(2)}`);
@@ -1319,7 +1362,7 @@ export default async function syncCart(req, res) {
             quantity: validatedItem.quantity,
             basePrice: secureEachPrice,
             finalPrice: securePrice, // SECURE PRICE ONLY
-            pizzaBase: validatedItem.pizzaBase || "Thin Crust",
+            pizzaBase: normalizePizzaBase(validatedItem.pizzaBase) || "Regular Crust",
             isCombo: false,
             isOtherItem: false,
             toppings: toppings,

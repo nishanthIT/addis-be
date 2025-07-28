@@ -959,17 +959,30 @@ if (event.type === "checkout.session.completed") {
             
             if (item.isOtherItem && item.otherItem) {
               itemName = item.otherItem.name;
-              itemDetails = `${item.quantity}x ${itemName} - £${item.finalPrice}`;
+              itemDetails = `${item.quantity}x ${itemName} - £${parseFloat(item.finalPrice).toFixed(2)}`;
             } else if (item.isCombo && item.combo) {
               itemName = item.combo.name;
-              itemDetails = `${item.quantity}x ${itemName} (${item.size}) - £${item.finalPrice}`;
+              itemDetails = `${item.quantity}x ${itemName} (${item.size}) - £${parseFloat(item.finalPrice).toFixed(2)}`;
             } else if (item.pizza) {
               itemName = item.pizza.name;
               const baseInfo = item.pizzaBase ? ` | Base: ${item.pizzaBase}` : '';
-              const toppingsInfo = item.cartToppings.length > 0 
-                ? ` | +${item.cartToppings.map(t => `${t.topping.name}(${t.addedQuantity})`).join(', ')}`
-                : '';
-              itemDetails = `${item.quantity}x ${itemName} (${item.size})${baseInfo}${toppingsInfo} - £${item.finalPrice}`;
+              
+              // Filter toppings to only show those with quantity > 0
+              const activeToppings = item.cartToppings.filter(t => t.addedQuantity > 0);
+              const activeIngredients = item.cartIngredients.filter(i => i.addedQuantity > 0);
+              
+              let modificationsInfo = '';
+              if (activeToppings.length > 0 || activeIngredients.length > 0) {
+                const toppingsText = activeToppings.map(t => `${t.topping.name}(${t.addedQuantity})`).join(', ');
+                const ingredientsText = activeIngredients.map(i => `${i.ingredient.name}(${i.addedQuantity})`).join(', ');
+                
+                const allModifications = [toppingsText, ingredientsText].filter(text => text.length > 0).join(', ');
+                if (allModifications) {
+                  modificationsInfo = ` | +${allModifications}`;
+                }
+              }
+              
+              itemDetails = `${item.quantity}x ${itemName} (${item.size})${baseInfo}${modificationsInfo} - £${parseFloat(item.finalPrice).toFixed(2)}`;
             }
             
             return `${index + 1}. ${itemDetails}`;
@@ -989,7 +1002,7 @@ ${orderTiming === 'preorder' ? `Scheduled: ${preorderDate} at ${preorderTime}` :
 ORDER ITEMS:
 ${formatOrderItems()}
 
-Total: £${totalAmount}
+Total: £${parseFloat(totalAmount).toFixed(2)}
 Payment: PAID ✅
 Status: PENDING
 

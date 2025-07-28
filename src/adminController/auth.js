@@ -3,8 +3,8 @@ import jwt from "jsonwebtoken";
 const JWT_SECRET = process.env.JWT_SECRET || "your-super-secret-key-2024";
 
 const ADMIN_CREDENTIALS = {
-  username: "admin",
-  password: "admin123",
+  username: "ananth",
+  password: "7877866920@addis",
 };
 
 export const login = async (req, res) => {
@@ -14,14 +14,14 @@ export const login = async (req, res) => {
     username === ADMIN_CREDENTIALS.username &&
     password === ADMIN_CREDENTIALS.password
   ) {
-    const token = jwt.sign({ username }, JWT_SECRET, { expiresIn: "24h" });
+    const token = jwt.sign({ username }, JWT_SECRET, { expiresIn: "7d" });
 
     // Set cookie
     res.cookie("adminToken", token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
-      maxAge: 24 * 60 * 60 * 1000,
+      maxAge: 7 *24 * 60 * 60 * 1000,
     });
 
     // Send response with token
