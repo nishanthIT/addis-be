@@ -590,6 +590,12 @@ const twilioPhone = process.env.TWILIO_PHONE_NUMBER;
 const client = twilio(accountSid, authToken);
 
 let otpStorage = {};
+let rateLimitTracker = {}; // Track OTP generation rate
+
+// Security configurations
+const RATE_LIMIT_WINDOW = 60 * 1000; // 1 minute window
+const MAX_OTP_REQUESTS = 3; // Maximum OTP requests per minute per phone number
+const OTP_EXPIRY = 300000; // 5 minutes
 
 // Helper function to format mobile number
 const formatMobileNumber = (mobile) => {
@@ -605,6 +611,59 @@ const formatMobileNumber = (mobile) => {
   
   return mobile;
 };
+
+// Check if phone number is rate limited
+const isRateLimited = (phone) => {
+  const now = Date.now();
+  const phoneRateLimit = rateLimitTracker[phone];
+
+  if (!phoneRateLimit) {
+    rateLimitTracker[phone] = {
+      count: 1,
+      windowStart: now
+    };
+    return false;
+  }
+
+  // Reset window if expired
+  if (now - phoneRateLimit.windowStart > RATE_LIMIT_WINDOW) {
+    rateLimitTracker[phone] = {
+      count: 1,
+      windowStart: now
+    };
+    return false;
+  }
+
+  // Check if exceeded limit
+  if (phoneRateLimit.count >= MAX_OTP_REQUESTS) {
+    return true;
+  }
+
+  phoneRateLimit.count++;
+  return false;
+};
+
+// Clean up expired rate limit entries
+const cleanupExpiredEntries = () => {
+  const now = Date.now();
+
+  // Clean up OTP storage
+  Object.keys(otpStorage).forEach(phone => {
+    if (otpStorage[phone].expires < now) {
+      delete otpStorage[phone];
+    }
+  });
+
+  // Clean up rate limit tracker
+  Object.keys(rateLimitTracker).forEach(phone => {
+    if (now - rateLimitTracker[phone].windowStart > RATE_LIMIT_WINDOW) {
+      delete rateLimitTracker[phone];
+    }
+  });
+};
+
+// Run cleanup every 5 minutes
+setInterval(cleanupExpiredEntries, 5 * 60 * 1000);
 
 const generateOtp = async (req, res) => {
   console.log("generateOtp called");
@@ -624,11 +683,19 @@ const generateOtp = async (req, res) => {
     });
   }
 
+  // Check rate limiting
+  if (isRateLimited(formattedMobile)) {
+    return res.status(429).json({
+      success: false,
+      message: `Too many OTP requests. Please wait a minute before requesting again. Maximum ${MAX_OTP_REQUESTS} requests per minute allowed.`
+    });
+  }
+
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
   
   otpStorage[formattedMobile] = {
     otp,
-    expires: Date.now() + 300000
+    expires: Date.now() + OTP_EXPIRY
   };
   
   console.log("otpStorage", otpStorage);
@@ -646,7 +713,8 @@ const generateOtp = async (req, res) => {
     res.status(200).json({ 
       success: true, 
       message: 'OTP sent successfully',
-      messageSid: message.sid 
+      messageSid: message.sid,
+      expiresIn: OTP_EXPIRY / 1000 // Send expiry time in seconds
     });
 
   } catch (error) {
