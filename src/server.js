@@ -762,6 +762,7 @@ import { verifyToken } from "./adminController/auth.js";
 import adminRoutes from "./routes/adminRoutes.js";
 import getPizzaRoutes from "./routes/getPizzaRoutes.js";
 import cartRoutes from "./routes/cartRoutes.js";
+import checkout from "./checkoutControler/checkout.js";
 
 dotenv.config();
 
@@ -1105,97 +1106,8 @@ const verifyUserToken = (req, res, next) => {
   }
 };
 
-// CREATE CHECKOUT SESSION - Use USER auth, not admin auth
-app.post("/api/create-checkout-session", verifyUserToken, async (req, res) => {
-  try {
-    const {
-      cartItems,
-      finalTotal,
-      deliveryFee,
-      taxAmount,
-      deliveryMethod,
-      name,
-      address,
-      pickupTime,
-      orderTiming,
-      preorderDate,
-      preorderTime,
-    } = req.body;
-
-    console.log("🎯 Checkout session timing data:", {
-      orderTiming,
-      preorderDate,
-      preorderTime,
-      deliveryMethod,
-      name
-    });
-
-    // Get authenticated user from middleware
-    const user = req.user;
-    console.log("✅ Authenticated user for checkout:", user);
-
-    // Get or create cart for the user
-    let cart = await prisma.cart.findFirst({
-      where: { userId: user.userId }
-    });
-
-    if (!cart) {
-      cart = await prisma.cart.create({
-        data: { userId: user.userId, totalAmount: 0 }
-      });
-      console.log("📦 Created new cart:", cart.id);
-    }
-
-    // Create Stripe checkout session
-    const session = await stripe.checkout.sessions.create({
-      payment_method_types: ["card"],
-      line_items: [
-        {
-          price_data: {
-            currency: "gbp",
-            product_data: {
-              name: "Food Order",
-              description: `${cartItems.length} items - ${deliveryMethod}`,
-            },
-            unit_amount: Math.round(finalTotal * 100),
-          },
-          quantity: 1,
-        },
-      ],
-      mode: "payment",
-      success_url: `http://localhost:3001/login?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `http://localhost:3001/checkout`,
-      metadata: {
-        userId: user.userId,
-        cartId: cart.id,
-        deliveryMethod,
-        name,
-        address: address || "",
-        pickupTime: pickupTime || "",
-        totalAmount: finalTotal.toString(),
-        orderTiming: orderTiming || "asap",
-        preorderDate: preorderDate || "",
-        preorderTime: preorderTime || "",
-      },
-    });
-
-    console.log("✅ Stripe session created:", {
-      sessionId: session.id,
-      orderTiming: session.metadata.orderTiming,
-      preorderDate: session.metadata.preorderDate,
-      preorderTime: session.metadata.preorderTime
-    });
-
-    res.json({ url: session.url });
-
-  } catch (error) {
-    console.error("❌ Error creating checkout session:", error);
-    res.status(500).json({ 
-      error: "Failed to create checkout session",
-      details: error.message 
-    });
-  }
-});
+// SECURE CHECKOUT SESSION - Use secure checkout controller
+app.post("/api/create-checkout-session", checkout);
 
 // Get user's meals donated based on total spending (10 pounds = 1 meal)
 app.get("/api/user/meals-donated", verifyUserToken, async (req, res) => {
